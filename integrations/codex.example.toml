@@ -4,6 +4,6 @@ command = "node"
 args = ["/absolute/path/to/cutbridge/scripts/mcp.mjs"]
 startup_timeout_sec = 60
 tool_timeout_sec = 180
-env_vars = ["CODEX_THREAD_ID", "CODEX_SESSION_ID"]
+env_vars = ["CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_APP_TOOLS_PIPE_PATH"]
 [mcp_servers.cutbridge.env]
 CUTBRIDGE_HOST = "codex"

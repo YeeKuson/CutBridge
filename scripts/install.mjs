@@ -31,7 +31,7 @@ try{
     const old=read(config)??'',entry={command:process.execPath,args:[path.join(root,'scripts/mcp.mjs')],env:{CUTBRIDGE_HOST:host}};
     let text,managed;
     if(host==='codex'){
-      managed=`${begin}\n[mcp_servers.cutbridge]\ncommand = ${JSON.stringify(entry.command)}\nargs = [${JSON.stringify(entry.args[0])}]\nstartup_timeout_sec = 60\ntool_timeout_sec = 180\nenv_vars = ["CODEX_THREAD_ID", "CODEX_SESSION_ID"]\n[mcp_servers.cutbridge.env]\nCUTBRIDGE_HOST = "codex"\n${end}`;
+      managed=`${begin}\n[mcp_servers.cutbridge]\ncommand = ${JSON.stringify(entry.command)}\nargs = [${JSON.stringify(entry.args[0])}]\nstartup_timeout_sec = 60\ntool_timeout_sec = 180\nenv_vars = ["CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_APP_TOOLS_PIPE_PATH"]\n[mcp_servers.cutbridge.env]\nCUTBRIDGE_HOST = "codex"\n${end}`;
       const start=old.indexOf(begin),finish=old.indexOf(end);
       if(start>=0){
         if(finish<start||old.indexOf(begin,start+1)>=0||old.indexOf(end,finish+1)>=0||hash(old.slice(start,finish+end.length))!==receipt?.configHash)throw Error('CutBridge MCP 配置已被人工修改，未覆盖：'+config);

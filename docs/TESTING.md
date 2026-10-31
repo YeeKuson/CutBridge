@@ -8,6 +8,7 @@ npm run check
 npm test
 npm run verify:mcp
 npm run verify:review
+npm run verify:relay
 npm run verify:render
 ```
 
@@ -17,11 +18,12 @@ npm run verify:render
 
 | 入口 | 验证内容 |
 | --- | --- |
-| `npm test` | 87 项规则、格式、保护、会话、反馈范围、并发状态、安装失败及安全迁移回归 |
+| `npm test` | 94 项规则、格式、保护、会话、反馈范围、并发状态、安装失败及安全迁移回归 |
 | `verify:mcp` | 19 个真实 stdio 工具握手、创建读取、待确认提案及 HTTP 认证 |
 | `verify:review` | 6 组浏览器定位、微调、反馈、页面隔离和后台退出恢复 |
 | `verify:render` | 真实 MP4 导出和媒体元数据验证 |
 | `verify:installation` | 两宿主隔离配置、新建与旧工程、两工作台反馈原图、导出及重开 |
+| `verify:relay` | 请求级身份、显式接管、旧租约拒绝、通知失败保留、Claude 通道消息以及单条气泡／批量确认；协议接收不替代真实模型测试 |
 
 安装专项必须指向另一个已经执行依赖安装和生产构建的源码目录，不能把当前仓库自己当独立安装证据：
 

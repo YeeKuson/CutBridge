@@ -128,6 +128,10 @@ button,a.secondary,a.action-button,summary{-webkit-tap-highlight-color:transpare
 .region-hint{display:flex;align-items:center;justify-content:space-between;font-size:.875rem}
 .inline-confirm{background:#333039;padding:16px;border-radius:12px;margin:16px 0}
 .inline-confirm p{font-size:1rem;margin:0 0 12px}.inline-confirm button+button{margin-left:8px}
+.delete-popover{position:fixed;z-index:1000;width:300px;max-width:calc(100vw - 24px);padding:18px;border:1px solid #626b7c;border-radius:16px;background:#292d36;box-shadow:0 12px 40px #0008;font-size:1rem;animation:delete-pop-in .14s ease-out}
+.delete-popover strong{font-weight:600}.delete-popover p{margin:8px 0 16px;color:var(--muted);font-size:.9375rem}.delete-popover>div{display:flex;justify-content:flex-end;gap:10px}.delete-popover button{min-height:44px;padding:10px 16px}
+@keyframes delete-pop-in{from{opacity:0;transform:translateY(4px) scale(.98)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.delete-popover{animation:none}}
 .danger-button{color:#ffccc7;background:#613c3b;padding:10px 16px}
 .operation-list{font-size:.9375rem}.operation-list>div{align-items:flex-start;overflow-wrap:anywhere;line-height:1.6}
 .proposal-meta{font-size:.875rem;color:var(--muted);margin:14px 0}

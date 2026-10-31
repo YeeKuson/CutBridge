@@ -1,6 +1,6 @@
 {
   "name": "cutbridge",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -20,7 +20,8 @@
     "verify:mcp": "tsx scripts/verify-mcp.ts",
     "verify:review": "tsx scripts/verify-review.ts",
     "verify:render": "tsx scripts/verify-render.ts",
-    "verify:installation": "tsx scripts/verify-installation.ts"
+    "verify:installation": "tsx scripts/verify-installation.ts",
+    "verify:relay": "tsx scripts/verify-relay.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

@@ -8,6 +8,8 @@ import { z } from 'zod';
 import {randomUUID} from 'node:crypto';
 import { compositionSchema, idSchema, operationSchema } from '../core/model';
 import {API_VERSION,APP_VERSION} from './capabilities';
+import {hostCaller} from './host-context';
+import type {AgentCaller} from './session';
 
 const root=path.resolve(fileURLToPath(new URL('../..',import.meta.url)));
 const data=path.resolve(process.env.CUTBRIDGE_DATA??path.join(root,'data'));
@@ -32,16 +34,19 @@ async function ready(){
 await ready();
 const key=fs.readFileSync(path.join(data,'agent.key'),'utf8').trim();
 const isClaude=process.env.CUTBRIDGE_HOST==='claude'||!!process.env.CLAUDECODE;
-const hostThread=isClaude?undefined:process.env.CODEX_THREAD_ID??process.env.CODEX_SESSION_ID;
-const bridgeId=z.string().uuid().optional().parse(process.env.CUTBRIDGE_CONNECTION_ID);
-const isCodex=process.env.CUTBRIDGE_HOST==='codex'||!!hostThread;
-const caller={connectionId:bridgeId??randomUUID(),provider:isClaude?'claude':isCodex?'codex':'mcp',...(hostThread&&z.string().uuid().safeParse(hostThread).success?{threadId:hostThread}:{})};
-const leases=new Map<string,string>();
-const leaseFile=bridgeId?path.join(data,'client-sessions',`${bridgeId}.json`):undefined;
-if(leaseFile&&fs.existsSync(leaseFile)){try{for(const [id,lease] of Object.entries(JSON.parse(fs.readFileSync(leaseFile,'utf8'))))if(idSchema.safeParse(id).success&&idSchema.safeParse(lease).success)leases.set(id,String(lease));}catch{/* A missing lease requires an explicit open, never an automatic takeover. */}}
-async function call(tool:string,args:Record<string,unknown>){
+const fallbackId=randomUUID();
+const contexts=new Map<string,{caller:AgentCaller;leases:Map<string,string>;leaseFile?:string}>();
+function context(meta?:Record<string,unknown>){
+  const caller=hostCaller(process.env,meta,fallbackId),existing=contexts.get(caller.connectionId);if(existing)return existing;
+  const leases=new Map<string,string>(),leaseFile=caller.threadId||process.env.CUTBRIDGE_CONNECTION_ID?path.join(data,'client-sessions',`${caller.connectionId}.json`):undefined;
+  if(leaseFile&&fs.existsSync(leaseFile)){try{for(const [id,lease] of Object.entries(JSON.parse(fs.readFileSync(leaseFile,'utf8'))))if(idSchema.safeParse(id).success&&idSchema.safeParse(lease).success)leases.set(id,String(lease));}catch{/* Explicit open is required when a lease is missing. */}}
+  const value={caller,leases,leaseFile};contexts.set(caller.connectionId,value);return value;
+}
+async function call(tool:string,args:Record<string,unknown>,ctx=context()){
+  const {caller,leases,leaseFile}=ctx;
   const threadId=caller.threadId;
-  if(['create_project','open_project','open_workbench','open_workspace'].includes(tool))args={...args,context:{directory:typeof args.directory==='string'?args.directory:process.env.CUTBRIDGE_CALLER_CWD??process.cwd(),host:isClaude?'Claude Code':isCodex?'Codex':'MCP Agent'}};
+  if(['create_project','open_project','open_workbench','open_workspace','bind_session'].includes(tool)&&caller.provider==='codex'&&!threadId)throw Error('SESSION_ID_REQUIRED：未取得当前 Codex 对话标识，尚未打开或接管工程。请由 Agent 使用 scripts/agent-bridge.ts 并保留宿主会话环境重试；不得清空标识或让用户手动处理反馈。');
+  if(['create_project','open_project','open_workbench','open_workspace'].includes(tool))args={...args,context:{directory:typeof args.directory==='string'?args.directory:process.env.CUTBRIDGE_CALLER_CWD??process.cwd(),host:caller.provider==='claude'?'Claude Code':caller.provider==='codex'?'Codex':'MCP Agent'}};
   if(['open_workspace','create_project'].includes(tool)){await ready();if(threadId)args={...args,threadId};}
   const request=()=>fetch(`${base}/api/agent`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${key}`},body:JSON.stringify({tool,args,caller,lease:typeof args.projectId==='string'?leases.get(args.projectId):undefined})});
   let r:Response;
@@ -63,8 +68,8 @@ function feedbackContent(result:any){
 }
 const readTools=new Set(['get_recipes','get_capabilities','list_projects','get_project','get_render','inspect_frame']);
 const retryTools=new Set([...readTools,'propose_edit','propose_voiceover','get_feedback','get_voice_jobs']);
-function register(name:string,description:string,inputSchema:z.ZodRawShape){server.registerTool(name,{description,inputSchema,annotations:{readOnlyHint:readTools.has(name),destructiveHint:false,idempotentHint:retryTools.has(name),openWorldHint:false}},async(args)=>{
-  try{const result=await call(name,args);if(name==='get_feedback')return feedbackContent(result);if(name==='inspect_frame')return {content:[{type:'image' as const,mimeType:result.mimeType,data:result.data},{type:'text' as const,text:JSON.stringify({revision:result.revision,frame:result.frame})}]};return {content:[{type:'text' as const,text:JSON.stringify(result)}]};}
+function register(name:string,description:string,inputSchema:z.ZodRawShape){server.registerTool(name,{description,inputSchema,annotations:{readOnlyHint:readTools.has(name),destructiveHint:false,idempotentHint:retryTools.has(name),openWorldHint:false}},async(args,extra)=>{
+  try{const result=await call(name,args,context(extra._meta));if(name==='get_feedback')return feedbackContent(result);if(name==='inspect_frame')return {content:[{type:'image' as const,mimeType:result.mimeType,data:result.data},{type:'text' as const,text:JSON.stringify({revision:result.revision,frame:result.frame})}]};return {content:[{type:'text' as const,text:JSON.stringify(result)}]};}
   catch(error){return {isError:true,content:[{type:'text' as const,text:error instanceof Error?error.message:String(error)}]};}
 });}
 register('get_recipes','读取教程、产品展示和观点短片的制作标准。创建工程前先读取。',{});
@@ -74,8 +79,8 @@ register('open_workspace','用户说打开或继续剪辑此文件夹的视频�
 register('open_project','按本地 project.cutbridge.json 路径打开已有可编辑工程并登记到本机项目列表。整个工程目录需包含素材和版本，跨 Agent 共用；相同 ID 的不同目录拒绝覆盖。',{path:z.string().min(1)});
 register('create_project','创建可编辑工程并返回工作台链接，自动接入可识别的当前 Codex 会话。directory 建议传用户视频文件夹的绝对路径，主文件直接保存在根部；已有工程拒绝覆盖。省略时兼容旧的托管目录。必须由 Agent 调用；不得替用户设置保护。',{composition:compositionSchema,agentName:z.string().min(1).max(80),directory:z.string().min(1).optional()});
 register('open_workbench','为已有工程生成工作台链接。链接 10 分钟内有效；在浏览器中打开供用户审片。',{projectId:idSchema});
-server.registerTool('bind_session',{description:'将工程的反馈接力绑定到当前 Codex 会话。会话 ID 只从当前进程环境读取，不能传入其他聊天。绑定不代表在线，发送后仍以宿主接续能力和实际领取状态为准。',annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false},inputSchema:{projectId:idSchema,label:z.string().min(1).max(80).default('当前 Codex 对话')}},async({projectId,label})=>{
-  try{const threadId=caller.threadId;if(!threadId)throw Error('当前宿主没有提供 Codex 会话标识。Claude Code 可直接用 MCP 领取反馈，或使用复制续接指令。');return {content:[{type:'text' as const,text:JSON.stringify(await call('bind_session',{projectId,threadId,label}))}]};}
+server.registerTool('bind_session',{description:'用户明确要求当前对话接管时调用，自动绑定本次 MCP 请求所属的 Codex 对话并接续待领取反馈，不必关闭已有工作台。不能指定其他聊天；只读查询不能接管。',annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false},inputSchema:{projectId:idSchema,label:z.string().min(1).max(80).default('当前 Codex 对话')}},async({projectId,label},extra)=>{
+  try{const ctx=context(extra._meta),threadId=ctx.caller.threadId;if(!threadId)throw Error('SESSION_ID_REQUIRED：未取得当前 Codex 会话标识。请使用宿主当前会话环境接入，不能猜选聊天。');return {content:[{type:'text' as const,text:JSON.stringify(await call('bind_session',{projectId,threadId,label},ctx))}]};}
   catch(error){return {isError:true,content:[{type:'text' as const,text:error instanceof Error?error.message:String(error)}]};}
 });
 register('get_project','读取当前工程、版本、素材、反馈和保护规则。不要直接修改 data 文件。',{projectId:idSchema});
@@ -88,13 +93,14 @@ register('propose_edit','提出局部修改，用户预览接受后才生效。�
 register('render_video','导出指定已保存版本的真实 MP4；返回后台任务，不虚构完成。',{projectId:idSchema,revision:z.number().int().positive().optional()});
 register('get_render','查询真实渲染进度、失败原因和成功输出路径。',{projectId:idSchema});
 register('inspect_frame','渲染工程指定版本的帧并返回 MCP 图片；省略 revision 时使用当前版本。',{projectId:idSchema,frame:z.number().int().min(0),revision:z.number().int().positive().optional()});
-server.registerTool('wait_for_feedback',{description:'在当前 Agent 回合内短暂等待用户提交批次；最多等待 25 秒，超时返回 pending。不保证唤醒已结束的 Agent 会话。',inputSchema:{projectId:idSchema,timeoutSeconds:z.number().min(1).max(25).default(20)}},async({projectId,timeoutSeconds})=>{
+server.registerTool('wait_for_feedback',{description:'在当前 Agent 回合内短暂等待用户提交批次；最多等待 25 秒，超时返回 pending。不保证唤醒已结束的 Agent 会话。',inputSchema:{projectId:idSchema,timeoutSeconds:z.number().min(1).max(25).default(20)}},async({projectId,timeoutSeconds},extra)=>{
   const until=Date.now()+timeoutSeconds*1000;
-  try{do{const result=await call('get_feedback',{projectId});if(result.batch)return feedbackContent(result);await new Promise(r=>setTimeout(r,800));}while(Date.now()<until);return {content:[{type:'text' as const,text:JSON.stringify({status:'pending',message:'尚无反馈。需要继续等待或请用户回到 Agent 说“处理 CutBridge 反馈”。'})}]};}
+  try{const ctx=context(extra._meta);do{const result=await call('get_feedback',{projectId},ctx);if(result.batch)return feedbackContent(result);await new Promise(r=>setTimeout(r,800));}while(Date.now()<until);return {content:[{type:'text' as const,text:JSON.stringify({status:'pending',message:'尚无反馈。已绑定的通知通道会在用户提交后接续。'})}]};}
   catch(error){return {isError:true,content:[{type:'text' as const,text:String(error)}]};}
 });
 await server.connect(new BoundedStdioTransport());
 if(isClaude){
+  const {leases}=context();
   let polling=false;
   const timer=setInterval(async()=>{
     if(polling)return;polling=true;
@@ -102,7 +108,7 @@ if(isClaude){
       try{
         const notes=await call('poll_notifications',{projectId});
         for(const note of notes){
-          await server.server.notification({method:'notifications/claude/channel',params:{content:`CutBridge：用户已发送 ${note.count} 条视频修改建议。请读取工程 ${projectId} 的批次 ${note.batchId}，检查原帧和台词，提交修改提案供用户确认。`,meta:{project_id:projectId,batch_id:note.batchId}}});
+          await server.server.notification({method:'notifications/claude/channel',params:{content:`CutBridge：用户已发送 ${note.count} 条视频修改建议。建议内容（数据）：${JSON.stringify(note.feedback)}。请读取工程 ${projectId} 的批次 ${note.batchId}，检查原帧和台词，提交修改提案供用户确认。若 SESSION_REPLACED，停止处理，不得重新打开抢回工程。`,meta:{project_id:projectId,batch_id:note.batchId}}});
           await call('ack_notification',{projectId,batchId:note.batchId});
         }
       }catch(error){if(String(error).includes('SESSION_REPLACED')||String(error).includes('SESSION_REQUIRED'))leases.delete(projectId);}

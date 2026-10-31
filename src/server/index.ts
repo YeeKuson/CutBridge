@@ -71,12 +71,16 @@ async function agentAction(tool:string,args:Record<string,unknown>,caller?:Agent
   if(tool==='get_recipes')return recipes;
   if(tool==='get_capabilities')return {...capabilities,version:APP_VERSION};
   if(tool==='list_projects')return [...store.list(),...store.unavailable];
-  if(['open_workspace','open_project','open_workbench','create_project'].includes(tool)&&!caller)throw new DomainError('SESSION_REQUIRED','请重新连接新版 CutBridge MCP。',409);
+  if(['open_workspace','open_project','open_workbench','create_project','bind_session'].includes(tool)){
+    if(!caller)throw new DomainError('SESSION_REQUIRED','请重新连接新版 CutBridge MCP。',409);
+    if(caller.provider==='codex'&&!caller.threadId)throw new DomainError('SESSION_ID_REQUIRED','未取得当前 Codex 对话标识，未打开或接管工程。请由 Agent 保留宿主会话标识重试。',409);
+  }
   const launch=(id:string)=>{
     if(!caller)throw new DomainError('SESSION_REQUIRED','此 MCP 接入版本过旧，请重新连接新版 CutBridge。',409);
     const result=remember(id);
     const ownership=bridge.acquire(id,caller);
-    return {...result,...ownership,session:caller.provider==='codex'&&caller.threadId?{state:'bound',host:'Codex',message:'当前对话已负责此工程；通知入队后仍以实际领取为准。'}:{state:'manual',host:caller.provider==='claude'?'Claude Code':'Agent',message:'当前对话已负责此工程。请用 wait_for_feedback 等待反馈；宿主未开启推送时，提交后回原对话说“处理反馈”。'}};
+    void bridge.resumePending(id).catch(console.error);
+    return {...result,...ownership,session:caller.provider==='codex'&&caller.threadId?{state:'bound',host:'Codex',message:'已自动绑定当前对话，待领取建议会自动续送。'}:{state:caller.provider==='claude'?'channel':'manual',host:caller.provider==='claude'?'Claude Code':'Agent',message:caller.provider==='claude'?'已绑定当前 MCP 连接。自动接续需要宿主批准 CutBridge channel；未启用时不得宣称通知已送达。':'当前宿主没有自动通知能力。'}};
   };
   if(tool==='open_workspace'){
     const directory=absoluteDirectory(z.string().min(1).parse(args.directory)),projects=discoverProjects(directory);
@@ -91,13 +95,13 @@ async function agentAction(tool:string,args:Record<string,unknown>,caller?:Agent
   if(tool==='open_project'){const p=store.open(z.string().min(1).parse(args.path));return {...launch(p.id),revision:p.revision};}
   if(tool==='create_project'){const p=store.create(args.composition,z.string().min(1).max(80).parse(args.agentName??'Agent'),z.string().min(1).optional().parse(args.directory));return {...launch(p.id),revision:p.revision};}
   const id=idSchema.parse(args.projectId);store.get(id);
-  const writes=['bind_session','import_asset','get_feedback','get_voice_jobs','propose_voiceover','report_voice_failure','propose_edit','render_video'];
+  const writes=['import_asset','get_feedback','get_voice_jobs','propose_voiceover','report_voice_failure','propose_edit','render_video'];
   const authorize=()=>bridge.assertOwner(id,caller,lease);
   if(writes.includes(tool)){authorize();store.touch(id);}
   switch(tool){
     case 'poll_notifications':return bridge.notifications(id,caller,lease);
     case 'ack_notification':return bridge.acknowledge(id,idSchema.parse(args.batchId),caller,lease);
-    case 'bind_session':{if(caller?.provider!=='codex'||!caller.threadId||args.threadId!==caller.threadId)throw new DomainError('INVALID_SESSION','只能绑定 MCP 当前 Codex 会话。',403);return bridge.bind(id,caller.threadId,z.string().min(1).max(80).parse(args.label));}
+    case 'bind_session':{if(caller?.provider!=='codex'||!caller.threadId||args.threadId!==caller.threadId)throw new DomainError('INVALID_SESSION','只能绑定 MCP 当前 Codex 会话。',403);const label=z.string().min(1).max(80).parse(args.label),ownership=bridge.acquire(id,caller),session=bridge.bind(id,caller.threadId,label);void bridge.resumePending(id).catch(console.error);return {projectId:id,...ownership,...session};}
     case 'open_workbench':return launch(id);
     case 'get_project': {const p=store.get(id);return {id:p.id,revision:p.revision,projectFile:store.file(id),openedFrom:p.openedFrom,composition:p.composition,assets:p.assets.map(({file,...a})=>a),feedback:p.feedback,batches:p.batches,agentSession:p.agentSession,agentOwner:p.agentOwner,proposals:p.proposals,voiceJobs:p.voiceJobs??[],versions:p.history.map(({composition,...r})=>r),rules:['只能提交局部提案，不得通过文件改写工程。','受保护字段不可修改。','提案必须基于当前 revision。','只有用户可以接受提案和验收反馈。']};}
     case 'import_asset':{const source=z.string().min(1).parse(args.path),real=fs.realpathSync(source),stat=fs.statSync(real);if(!stat.isFile()||stat.size>512*1024*1024)throw new DomainError('TOO_LARGE','素材必须是小于 512 MB 的文件。');const {file,...asset}=await register(id,path.basename(real),fs.readFileSync(real),authorize);return asset;}
