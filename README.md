@@ -10,7 +10,7 @@
 
 CutBridge 是通过 Codex 或 Claude Code 使用的本地视频审片工作台。Agent 负责制作视频和提出修改，人通过可视化界面定位画面、台词与配音的问题，把多个位置的建议一次送回 Agent，再预览、试听和确认结果。
 
-当前为 **0.2.0 源码体验版**：需要本地 Node.js/npm 环境和可使用 MCP 的 Agent。Windows 是主要验收平台；Linux 有 Ubuntu/WSL2 专项结果，macOS 尚未实机验收。工作台没有内置聊天模型或 TTS 服务，也没有脱离 Agent 的独立新建工程入口。
+当前为 **0.2.1 源码体验版**：需要本地 Node.js/npm 环境和可使用 MCP 的 Agent。Windows 是主要验收平台；Linux 有 Ubuntu/WSL2 专项结果，macOS 尚未实机验收。工作台没有内置聊天模型或 TTS 服务，也没有脱离 Agent 的独立新建工程入口。
 
 ![CutBridge 审片工作台，示例工程](assets/workbench.png)
 
@@ -263,7 +263,7 @@ my-video/
 | `requestRecords` | 请求幂等记录 |
 | `voiceJobs` | 兼容旧配音任务流程的记录 |
 
-软件版本 **0.2.0**、本地 API **v2**、工程格式 **v1** 分别管理。未知文件格式会被拒绝读取，原文件保留，不降级写回。
+软件版本 **0.2.1**、本地 API **v2**、工程格式 **v1** 分别管理。未知文件格式会被拒绝读取，原文件保留，不降级写回。
 
 素材和导出引用使用目录内相对路径。备份或迁移时应保留整个视频目录，单独复制 JSON 不会带上音视频。工程本身可能包含反馈内容、操作者说明和来源目录等元数据，分享工程前应检查。对话负责权与会话绑定只在当前服务内有效，不随工程迁移。
 
@@ -370,7 +370,16 @@ Agent 的关键顺序：读取工程 → 领取反馈 → 检查原图及修改�
 
 ### 已知依赖审计项
 
-2026-10-31 使用 npm 官方 registry 审计当前锁文件，结果为 **8 个 high 依赖树条目**，关联同一个 [Zod 大集合校验内存耗尽公告](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) 。条目包含传递依赖，不代表 8 个不同的漏洞。服务已加入输入预算限制，但这不等于依赖漏洞已消除；Zod 大版本及 MCP／Remotion 相关升级仍需专项回归。本版未使用 `npm audit fix --force` 自动替换已验证依赖。
+0.2.1 将直接及传递 Zod 依赖统一固定为 **4.6.7**，修复此前关联同一 [Zod 大集合校验内存耗尽公告](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) 的 8 个 high 条目。2026-10-31 对完整依赖树执行官方 registry 审计，结果为 **0 个已知漏洞**，包含开发依赖；这不等于对未知漏洞作出保证。
+
+Remotion 4.0.539 及其 Windows 进程补丁保持不变，`overrides.zod` 与直接依赖使用同一版本，避免嵌套安装旧 Zod。迁移同时保留新工程默认值及局部修改语义：只改标题不会重置位置、音量或字幕样式。HTTP/MCP 输入预算继续生效，工程格式 v1 无需迁移。维护时不要移除 override 后直接发布；先确认依赖树与官方审计，再执行回归。
+
+从 0.2.0 升级时，更新源码后执行 `npm ci` 和 `npm run build`，再正常彻底退出工作台并让 Agent 重新打开。运行中的旧后台不会自动加载新依赖；原有视频目录和工程文件继续保留。
+
+```powershell
+npm ls zod --all
+npm audit --registry=https://registry.npmjs.org
+```
 
 可自行复核当前结果：`npm audit --registry=https://registry.npmjs.org`。部分 npm 镜像没有审计接口，镜像返回 404 不能解释为零漏洞。
 
@@ -392,7 +401,7 @@ npm run verify:review
 npm run verify:render
 ```
 
-`npm test` 覆盖当前 83 项规则、存储、反馈范围、安装失败和恢复测试。浏览器流程在 Windows 优先找 Edge；其他环境可用 `CUTBRIDGE_BROWSER` 指定浏览器，或安装 Playwright 的 Chromium。渲染浏览器与浏览器交互测试使用的浏览器是两个用途不同的依赖。
+`npm test` 覆盖当前 87 项规则、存储、反馈范围、安装失败和恢复测试，包括超限集合快速拒绝、默认值兼容与局部修改字段保留。浏览器流程在 Windows 优先找 Edge；其他环境可用 `CUTBRIDGE_BROWSER` 指定浏览器，或安装 Playwright 的 Chromium。渲染浏览器与浏览器交互测试使用的浏览器是两个用途不同的依赖。
 
 测试使用独立数据和 4320–4327 端口；同端口脚本不要并行执行。`verify:installation` 需要 `CUTBRIDGE_TEST_INSTALLATION` 指向另一个已安装构建的源码副本，验证从安装配置到双工作台的完整路径。
 

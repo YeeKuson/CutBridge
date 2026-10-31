@@ -64,7 +64,7 @@ async function register(id:string,name:string,content:Buffer,authorize?:()=>void
   }catch(e){fs.unlinkSync(file);throw new DomainError('INVALID_MEDIA',`无法读取素材：${e instanceof Error?e.message:String(e)}`);}
   try{authorize?.();store.addAsset(id,asset);return asset;}catch(error){fs.unlinkSync(file);throw error;}
 }
-const agentInput=z.object({tool:z.string(),args:z.record(z.unknown()).default({}),caller:callerSchema.optional(),lease:idSchema.optional()}).strict();
+const agentInput=z.object({tool:z.string(),args:z.record(z.string(),z.unknown()).default({}),caller:callerSchema.optional(),lease:idSchema.optional()}).strict();
 const proposalInput=z.object({projectId:idSchema,baseRevision:z.number().int().safe().positive(),requestId:idSchema,operations:z.array(operationSchema).min(1).max(100),rationale:z.string().min(1).max(3000),feedbackIds:z.array(idSchema).default([])}).strict();
 async function agentAction(tool:string,args:Record<string,unknown>,caller?:AgentCaller,lease?:string){
   const remember=(id:string)=>{if(args.context){const ctx=z.object({directory:z.string().max(2000),host:z.string().max(80)}).strict().parse(args.context);const p=store.get(id);p.openedFrom={...ctx,at:now()};store.save(p);}return ticket(id);};

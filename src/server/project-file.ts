@@ -15,8 +15,8 @@ const projectSchema=z.object({
   batches:z.array(z.object({id:idSchema,feedbackIds:z.array(idSchema),status:z.enum(['queued','claimed','review','done']),createdAt:timestamp,delivery:z.object({state:z.enum(['sending','queued','notified','failed']),at:timestamp,messageId:z.string().optional(),needsResume:z.boolean().optional(),error:z.string().optional()}).optional()})),
   proposals:z.array(z.object({id:idSchema,requestId:idSchema,baseRevision:z.number().int().positive(),operations:z.array(operationSchema),rationale:z.string(),feedbackIds:z.array(idSchema),status:z.enum(['pending','accepted','rejected']),createdAt:timestamp,appliedRevision:z.number().int().positive().optional()})),
   renders:z.array(z.object({id:idSchema,revision:z.number().int().positive(),state:z.enum(['queued','rendering','done','failed','cancelled']),progress:z.number(),createdAt:timestamp,error:z.string().optional(),file:z.string().optional()})),
-  agent:z.object({name:z.string(),lastSeen:timestamp}),openedFrom:z.object({directory:z.string(),host:z.string(),at:timestamp}).optional(),receipts:z.record(z.number().int().positive()),
-  requestRecords:z.record(z.object({kind:z.string(),signature:z.string(),ids:z.array(idSchema)})).optional(),
+  agent:z.object({name:z.string(),lastSeen:timestamp}),openedFrom:z.object({directory:z.string(),host:z.string(),at:timestamp}).optional(),receipts:z.record(z.string(),z.number().int().positive()),
+  requestRecords:z.record(z.string(),z.object({kind:z.string(),signature:z.string(),ids:z.array(idSchema)})).optional(),
   voiceJobs:z.array(z.object({id:idSchema,captionId:idSchema,clipId:idSchema,text:z.string(),start:z.number().int(),end:z.number().int(),voiceLabel:z.string(),guidance:z.string(),baseRevision:z.number().int().positive(),createdAt:timestamp,status:z.enum(['queued','claimed','review','accepted','rejected','failed','stale']),proposalId:idSchema.optional(),error:z.string().optional()})).optional(),
 });
 

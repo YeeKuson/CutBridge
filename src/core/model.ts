@@ -39,14 +39,19 @@ export const compositionSchema = z.object({
   title: z.string().min(1).max(120), fps: z.literal(30).default(30),
   width: z.union([z.literal(1920), z.literal(1080)]).default(1920),
   height: z.union([z.literal(1080), z.literal(1920)]).default(1080),
-  brief: briefSchema.default({}), clips: z.array(clipSchema).min(1).max(80),
+  brief: briefSchema.prefault({}), clips: z.array(clipSchema).min(1).max(80),
   captions: z.array(captionSchema).max(1000).default([]),
   music: z.object({ assetId: idSchema, volume: z.number().min(0).max(1).default(0.15) }).strict().nullable().default(null),
   musicProtected: z.boolean().default(false),
 }).strict();
 export type Composition = z.infer<typeof compositionSchema>;
 
-const clipPatch = clipSchema.omit({ id: true, protected: true, kind: true }).partial();
+// Creation defaults must never populate omitted fields in a partial edit.
+function patchSchema<T extends z.ZodRawShape>(shape:T){
+  const fields=Object.fromEntries(Object.entries(shape).map(([key,schema])=>[key,schema instanceof z.ZodDefault?schema.unwrap():schema])) as {[K in keyof T]:T[K] extends z.ZodDefault<infer Inner>?Inner:T[K]};
+  return z.object(fields).partial().strict();
+}
+const clipPatch = patchSchema(clipSchema.omit({ id: true, protected: true, kind: true }).shape);
 export const operationSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('update_clip'), id: idSchema, patch: clipPatch }).strict(),
   z.object({ type: z.literal('insert_clip'), afterId: idSchema.optional(), clip: clipSchema }).strict(),
@@ -54,7 +59,7 @@ export const operationSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('move_clip'), id: idSchema, toIndex: z.number().int().min(0).max(79) }).strict(),
   z.object({ type: z.literal('split_clip'), id: idSchema, at: frame.min(1), newId: idSchema }).strict(),
   z.object({ type: z.literal('add_caption'), caption: captionSchema }).strict(),
-  z.object({ type: z.literal('update_caption'), id: idSchema, patch: captionSchema.omit({ id: true, clipId: true, voice:true }).partial() }).strict(),
+  z.object({ type: z.literal('update_caption'), id: idSchema, patch: patchSchema(captionSchema.omit({ id: true, clipId: true, voice:true }).shape) }).strict(),
   z.object({ type:z.literal('set_caption_voice'),id:idSchema,voice:voiceSchema.nullable() }).strict(),
   z.object({ type: z.literal('remove_caption'), id: idSchema }).strict(),
   z.object({ type: z.literal('set_music'), music: compositionSchema.shape.music }).strict(),
