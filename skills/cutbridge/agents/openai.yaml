@@ -1,0 +1,6 @@
+interface:
+  display_name: "CutBridge 视频工作台"
+  short_description: "从当前视频文件夹打开可编辑工程，与 Agent 配合标记、改字幕和审查修改。"
+  default_prompt: "使用 $cutbridge 打开这个视频的剪辑工作台。"
+policy:
+  allow_implicit_invocation: true

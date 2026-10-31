@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cutbridge": {
+      "command": "node",
+      "args": ["/absolute/path/to/cutbridge/scripts/mcp.mjs"],
+      "env": {"CUTBRIDGE_HOST": "claude"}
+    }
+  }
+}

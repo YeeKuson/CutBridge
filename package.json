@@ -1,0 +1,47 @@
+{
+  "name": "cutbridge",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "postinstall": "node scripts/patch-renderer.mjs",
+    "verify:processes": "node scripts/patch-renderer.mjs",
+    "dev": "tsx src/server/index.ts",
+    "build": "tsc --noEmit && vite build",
+    "start": "tsx src/server/index.ts --production",
+    "mcp": "tsx src/server/mcp.ts",
+    "check": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "setup:print": "node scripts/print-config.mjs",
+    "setup": "node scripts/install.mjs",
+    "verify:mcp": "tsx scripts/verify-mcp.ts",
+    "verify:review": "tsx scripts/verify-review.ts",
+    "verify:render": "tsx scripts/verify-render.ts",
+    "verify:installation": "tsx scripts/verify-installation.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@remotion/bundler": "4.0.539",
+    "@remotion/player": "4.0.539",
+    "@remotion/renderer": "4.0.539",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "remotion": "4.0.539",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.1",
+    "fast-check": "4.10.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2"
+  }
+}
