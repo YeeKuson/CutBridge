@@ -19,13 +19,14 @@ npm run verify:render
 
 | 入口 | 验证内容 |
 | --- | --- |
-| `npm test` | 97 项规则、格式、保护、会话、反馈范围、并发状态、安装失败、安全迁移及短时访问凭据回归 |
+| `npm test` | 99 项规则、格式、保护、会话、反馈范围、并发状态、安装目录与失败保护、安全迁移、访问凭据与启动参数回归 |
 | `verify:mcp` | 19 个真实 stdio 工具握手、创建读取、待确认提案及 HTTP 认证 |
 | `verify:review` | 6 组浏览器定位、微调、反馈、页面隔离和后台退出恢复 |
 | `verify:render` | 真实 MP4 导出和媒体元数据验证 |
 | `verify:installation` | 两宿主隔离配置、新建与旧工程、两工作台反馈原图、导出及重开 |
 | `verify:relay` | 请求级身份、显式接管、旧租约拒绝、通知失败保留、Claude 通道消息以及单条气泡／批量确认；协议接收不替代真实模型测试 |
 | `verify:open-links` | 两个独立浏览器打开、重复与并发访问、Cookie 隔离、短暂断网／502／超时恢复、发起 MCP 退出后持续使用及后台重启失效 |
+| `verify:host-lifecycle` | Windows Job 整组回收后后台 PID、原 Cookie、双页面、播放、未发送草稿仍有效；需要 Windows 和 Python，不运行真实用户宿主 |
 
 安装专项必须指向另一个已经执行依赖安装和生产构建的源码目录，不能把当前仓库自己当独立安装证据：
 
@@ -39,6 +40,7 @@ npm run verify:installation
 ## 平台接口
 
 - `scripts/test-platform.ts`：浏览器、媒体二进制和空设备定位。Windows 自动查找 Edge；可用 `CUTBRIDGE_BROWSER` 指定其他兼容浏览器，或安装 Playwright Chromium。
+- `src/server/launch-service.ts` 与 `scripts/service.mjs`：Windows 使用隐藏 WMI 后台进程，避免宿主 Job 回收同时终止工作台；其他系统使用 detached。启动失败直接报告，不改变系统策略。
 - `src/server/service-lock.ts`：Windows 命名管道、Linux abstract socket、macOS Unix socket 的服务互斥。
 - `src/server/session.ts`：宿主通知适配及错误恢复。
 - `src/server/project-file.ts`：相对路径、文件格式、指纹和原子写入。

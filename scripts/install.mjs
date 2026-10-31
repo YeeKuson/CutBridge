@@ -14,6 +14,7 @@ const hash=value=>createHash('sha256').update(value).digest('hex');
 const read=file=>fs.existsSync(file)?fs.readFileSync(file,'utf8'):undefined;
 const begin='# BEGIN CUTBRIDGE MANAGED MCP',end='# END CUTBRIDGE MANAGED MCP';
 try{
+  if(process.platform==='win32'&&/[\\/]AppData[\\/]Local[\\/]Packages[\\/][^\\/]+[\\/]LocalCache[\\/]/i.test(fs.realpathSync.native(root)))throw Error('INSTALL_VIRTUALIZED：安装目录位于宿主应用的私有缓存，其他 Agent 和独立后台无法可靠访问。请将发布包安装到用户目录下的 CutBridge/app，再运行安装命令；宿主配置未写入。');
   if(!['codex','claude','both'].includes(values.host))throw Error('用法：npm run setup -- --host codex|claude|both [--apply]。默认只预览；--home 仅用于指定隔离的用户目录。');
   if(!['win32','darwin','linux'].includes(process.platform))throw Error('此平台尚无 CutBridge 接入适配。');
   if(process.platform!=='win32'&&values.apply&&!values['experimental-platform'])throw Error('macOS/Linux 尚未实机验收。可先预览配置；试验接入请显式添加 --experimental-platform，配置仍会备份。');

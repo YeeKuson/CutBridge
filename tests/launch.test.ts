@@ -45,6 +45,14 @@ test('installer rejects a preexisting unmanaged MCP before creating any skill',(
   assert.equal(fs.existsSync(path.join(home,'.agents')),false);assert.match(fs.readFileSync(config,'utf8'),/my-server/);
 });
 
+test('Windows installer rejects application-private cache before writing host configuration',{skip:process.platform!=='win32'},()=>{
+  const {root}=setup(),installation=folder(root,'AppData/Local/Packages/Example.Host/LocalCache/Local/CutBridge'),home=folder(root,'home');
+  const script=path.join(folder(installation,'scripts'),'install.mjs');fs.copyFileSync('scripts/install.mjs',script);
+  const config=path.join(folder(home,'.codex'),'config.toml');fs.writeFileSync(config,'model = "keep"\n');
+  assert.throws(()=>execFileSync(process.execPath,[script,'--host','codex','--home',home,'--apply'],{encoding:'utf8',windowsHide:true}),/INSTALL_VIRTUALIZED/);
+  assert.equal(fs.readFileSync(config,'utf8'),'model = "keep"\n');assert.equal(fs.existsSync(path.join(home,'.agents')),false);
+});
+
 test('renderer download failure leaves both host settings and skills untouched',()=>{
   const {root}=setup(),installation=folder(root,'installation'),home=folder(root,'home');
   // Resolve dependencies from the parent checkout, but use an empty renderer cache.

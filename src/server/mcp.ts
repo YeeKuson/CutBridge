@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { BoundedStdioTransport } from './bounded-transport';
@@ -10,6 +9,7 @@ import { compositionSchema, idSchema, operationSchema } from '../core/model';
 import {API_VERSION,APP_VERSION} from './capabilities';
 import {hostCaller} from './host-context';
 import type {AgentCaller} from './session';
+import {launchService} from './launch-service';
 
 const root=path.resolve(fileURLToPath(new URL('../..',import.meta.url)));
 const data=path.resolve(process.env.CUTBRIDGE_DATA??path.join(root,'data'));
@@ -27,8 +27,7 @@ async function ready(){
     return true;
   };
   if(await probe())return;
-  fs.mkdirSync(data,{recursive:true});const log=fs.openSync(path.join(data,'server.log'),'a');
-  const child=spawn(process.execPath,['--import','tsx',path.join(root,'src/server/index.ts'),...(fs.existsSync(path.join(root,'dist/web/index.html'))?['--production']:[])],{cwd:root,detached:true,windowsHide:true,stdio:['ignore',log,log],env:{...process.env,CUTBRIDGE_DATA:data}});child.unref();fs.closeSync(log);
+  await launchService(root,data);
   for(let i=0;i<60;i++){await new Promise(r=>setTimeout(r,500));if(await probe())return;}
   throw Error('工作台启动失败，请检查 data/server.log。');
 }
