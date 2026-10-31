@@ -18,6 +18,7 @@ import {APP_VERSION,capabilities} from './capabilities';
 import {claimService} from './service-lock';
 import {serveFile} from './file-response';
 import {assertInputBudget} from '../core/input-budget';
+import {WorkbenchLinks} from './workbench-links';
 
 const root=path.resolve(fileURLToPath(new URL('../..',import.meta.url)));
 const port=Number(process.env.CUTBRIDGE_PORT??4318);
@@ -30,7 +31,7 @@ if(!fs.existsSync(keyPath))fs.writeFileSync(keyPath,randomBytes(32).toString('he
 const agentKey=fs.readFileSync(keyPath,'utf8').trim();
 const mediaKey=randomBytes(24).toString('hex');
 const responseEpoch=randomBytes(8).toString('hex');
-const tickets=new Map<string,{id:string;expires:number}>();
+const workbenchLinks=new WorkbenchLinks();
 const sessions=new Map<string,string>();
 const media=(p:Pick<Project,'id'|'assets'>)=>Object.fromEntries(p.assets.map(a=>[a.id,`${origin}/media/${p.id}/${a.id}?key=${mediaKey}`]));
 const publicProject=(id:string,compact=false)=>{const p=compact?store.workbench(id):store.get(id);return {...p,projectFile:store.file(id),assets:p.assets.map(({file,...a})=>a),renders:p.renders.map(({file,...j})=>j),media:media(p)};};
@@ -41,7 +42,7 @@ const secretEqual=(a:string,b:string)=>{const left=Buffer.from(a),right=Buffer.f
 const send=(res:ServerResponse,status:number,data:unknown)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
 async function body(req:IncomingMessage,limit=2*1024*1024){const chunks:Buffer[]=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>limit)throw new DomainError('TOO_LARGE','请求超过大小限制。',413);chunks.push(chunk);}return Buffer.concat(chunks);}
 async function json(req:IncomingMessage){try{const value=JSON.parse((await body(req)).toString('utf8'));if(value===null||typeof value!=='object'||Array.isArray(value))throw Error('Expected object');assertInputBudget(value);return value;}catch(e){if(e instanceof DomainError)throw e;throw new DomainError('INVALID_JSON','请求格式无效。');}}
-function ticket(id:string){store.get(id);const t=randomBytes(24).toString('hex');tickets.set(t,{id,expires:Date.now()+10*60*1000});return {projectId:id,projectFile:store.file(id),url:`${origin}/#ticket=${t}`,expiresInSeconds:600,workspaceUrl:`${origin}/?project=${id}`,recentProjectsUrl:`${origin}/?home=1`};}
+function ticket(id:string){store.get(id);return {projectId:id,projectFile:store.file(id),...workbenchLinks.issue(origin,id),recentProjectsUrl:`${origin}/?home=1`,openInstructions:'打开浏览器及回复用户的可点击链接均须原样使用 url 或 workspaceUrl，保留 #ticket；两个字段是同一授权入口，10 分钟内可跨浏览器打开。不要把去掉 ticket 的收藏地址用于首次打开；不要把访问凭据写入公开文档。'};}
 function session(req:IncomingMessage){const requested=req.headers['x-cutbridge-project']??new URL(req.url??'/',origin).searchParams.get('project');if(typeof requested!=='string'||!idSchema.safeParse(requested).success)throw new DomainError('AGENT_REQUIRED','请从 Agent 打开此工程。',401);const name=`cb_session_${requested}=`,cookie=req.headers.cookie?.split(';').map(v=>v.trim()).find(v=>v.startsWith(name))?.slice(name.length);if(!cookie||sessions.get(cookie)!==requested)throw new DomainError('AGENT_REQUIRED','此工程未授权，请从 Agent 重新打开。',401);return requested;}
 const formats:Record<string,{kind:Asset['kind'];mime:string}>={'.mp4':{kind:'video',mime:'video/mp4'},'.webm':{kind:'video',mime:'video/webm'},'.mov':{kind:'video',mime:'video/quicktime'},'.png':{kind:'image',mime:'image/png'},'.jpg':{kind:'image',mime:'image/jpeg'},'.jpeg':{kind:'image',mime:'image/jpeg'},'.webp':{kind:'image',mime:'image/webp'},'.mp3':{kind:'audio',mime:'audio/mpeg'},'.wav':{kind:'audio',mime:'audio/wav'},'.m4a':{kind:'audio',mime:'audio/mp4'},'.ogg':{kind:'audio',mime:'audio/ogg'}};
 async function register(id:string,name:string,content:Buffer,authorize?:()=>void){
@@ -145,9 +146,9 @@ const server=http.createServer(async(req,res)=>{
       send(res,200,store.list().filter(project=>{const name=`cb_session_${project.id}=`;return cookies.some(c=>c.startsWith(name)&&sessions.get(c.slice(name.length))===project.id);}).map(project=>({...project,url:`/?project=${project.id}`})));return;
     }
     if(p==='/api/connect'&&req.method==='POST'){
-      const {ticket:t}=z.object({ticket:z.string()}).parse(await json(req)),v=tickets.get(t);
-      if(!v||v.expires<Date.now())throw new DomainError('INVALID_TICKET','工作台链接已过期，请让 Agent 重新打开。',401);
-      const sid=randomBytes(32).toString('hex');sessions.set(sid,v.id);tickets.delete(t);res.setHeader('Set-Cookie',`cb_session_${v.id}=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000`);send(res,200,publicProject(v.id,req.headers['x-cutbridge-view']==='workbench'));return;
+      const {ticket:t}=z.object({ticket:z.string().max(100)}).parse(await json(req)),id=workbenchLinks.projectFor(t);
+      if(!id)throw new DomainError('INVALID_TICKET','工作台链接已失效，请让 Agent 重新打开。',401);
+      const sid=randomBytes(32).toString('hex');sessions.set(sid,id);res.setHeader('Set-Cookie',`cb_session_${id}=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000`);send(res,200,publicProject(id,req.headers['x-cutbridge-view']==='workbench'));return;
     }
     if(p==='/api/agent'&&req.method==='POST'){
       if(!secretEqual(req.headers.authorization??'',`Bearer ${agentKey}`))throw new DomainError('UNAUTHORIZED','Agent 连接未授权。',401);

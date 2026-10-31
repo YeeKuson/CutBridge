@@ -20,6 +20,7 @@ async function ready(){
     let state:any;try{state=await r.json();}catch{throw Error('此端口已被其他服务占用，请设置 CUTBRIDGE_PORT。');}
     if(state.name!=='CutBridge')throw Error('此端口已被其他服务占用，请设置 CUTBRIDGE_PORT。');
     if(state.apiVersion!==API_VERSION)throw Error('运行中的 CutBridge 接口版本不兼容。请先在原工作台彻底退出，再重新打开；工程会保留。');
+    if(state.version!==APP_VERSION)throw Error(`SERVICE_VERSION_MISMATCH：后台为 ${String(state.version)}，当前 MCP 为 ${APP_VERSION}。请退出旧工作台后台后重新打开，不混用不同版本；工程会保留。`);
     const keyFile=path.join(data,'agent.key');if(!fs.existsSync(keyFile))throw Error('此端口的服务不属于当前数据目录。请让两个宿主使用相同的 CutBridge 安装和数据目录。');
     const auth=await fetch(`${base}/api/agent`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${fs.readFileSync(keyFile,'utf8').trim()}`},body:JSON.stringify({tool:'get_capabilities',args:{}}),signal:AbortSignal.timeout(2000)});
     if(!auth.ok)throw Error('当前数据目录无法认证此端口的服务。请检查 CUTBRIDGE_PORT 与 CUTBRIDGE_DATA，未接管任何工程。');
@@ -78,7 +79,7 @@ register('list_projects','列出此电脑已有的 CutBridge 工程。',{});
 register('open_workspace','用户说打开或继续剪辑此文件夹的视频时优先调用：发现工程、启动工作台，并在宿主提供会话标识时自动接入当前 Codex 对话。directory 必须是用户当前视频文件夹的绝对路径，不要猜 MCP 进程工作目录。多个工程返回候选；选定后带 projectFile 重试；没有工程不会擅自创建。',{directory:z.string().min(1),projectFile:z.string().min(1).optional()});
 register('open_project','按本地 project.cutbridge.json 路径打开已有可编辑工程并登记到本机项目列表。整个工程目录需包含素材和版本，跨 Agent 共用；相同 ID 的不同目录拒绝覆盖。',{path:z.string().min(1)});
 register('create_project','创建可编辑工程并返回工作台链接，自动接入可识别的当前 Codex 会话。directory 建议传用户视频文件夹的绝对路径，主文件直接保存在根部；已有工程拒绝覆盖。省略时兼容旧的托管目录。必须由 Agent 调用；不得替用户设置保护。',{composition:compositionSchema,agentName:z.string().min(1).max(80),directory:z.string().min(1).optional()});
-register('open_workbench','为已有工程生成工作台链接。链接 10 分钟内有效；在浏览器中打开供用户审片。',{projectId:idSchema});
+register('open_workbench','为已有工程生成工作台授权链接。url 与 workspaceUrl 均须原样用于打开浏览器和最终回复，保留 #ticket；链接 10 分钟内可在系统浏览器和聊天侧边预览分别打开。仅发起浏览器打开不等于已验证加载。',{projectId:idSchema});
 server.registerTool('bind_session',{description:'用户明确要求当前对话接管时调用，自动绑定本次 MCP 请求所属的 Codex 对话并接续待领取反馈，不必关闭已有工作台。不能指定其他聊天；只读查询不能接管。',annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false},inputSchema:{projectId:idSchema,label:z.string().min(1).max(80).default('当前 Codex 对话')}},async({projectId,label},extra)=>{
   try{const ctx=context(extra._meta),threadId=ctx.caller.threadId;if(!threadId)throw Error('SESSION_ID_REQUIRED：未取得当前 Codex 会话标识。请使用宿主当前会话环境接入，不能猜选聊天。');return {content:[{type:'text' as const,text:JSON.stringify(await call('bind_session',{projectId,threadId,label},ctx))}]};}
   catch(error){return {isError:true,content:[{type:'text' as const,text:error instanceof Error?error.message:String(error)}]};}

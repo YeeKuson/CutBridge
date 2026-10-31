@@ -1,0 +1,78 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import {chromium,expect} from '@playwright/test';
+import {connectMcp,tool,closeTestService} from './mcp-client';
+import {browserOptions} from './test-platform';
+import http from 'node:http';
+
+const root=fs.mkdtempSync(path.resolve('.tmp/cutbridge/open-links-')),port=4325,origin=`http://127.0.0.1:${port}`;
+const env={CUTBRIDGE_DATA:path.join(root,'data'),CUTBRIDGE_PORT:String(port),CUTBRIDGE_HOST:'mcp',CODEX_THREAD_ID:'',CODEX_SESSION_ID:'',CLAUDECODE:''};
+let client=await connectMcp(env);const browser=await chromium.launch(browserOptions()),errors:string[]=[],passed:string[]=[];
+const desktop=await browser.newContext(),embedded=await browser.newContext(),stranger=await browser.newContext();
+const a=await desktop.newPage(),b=await embedded.newPage(),c=await stranger.newPage();
+for(const page of [a,b,c])page.on('pageerror',e=>errors.push(e.message));
+let id='';
+try{
+  const created=await tool(client,'create_project',{agentName:'Test',composition:{title:'跨浏览器打开验收',clips:[{id:'shot',name:'镜头',title:'验收画面',duration:90}]}});id=created.projectId;
+  await a.goto(created.url);await expect(a.locator('.project-title')).toHaveText('跨浏览器打开验收');
+  await b.goto(created.workspaceUrl);
+  await b.screenshot({path:path.join(root,'second-browser.png')});
+  await expect(b.locator('.project-title')).toHaveText('跨浏览器打开验收',{timeout:5000});
+  passed.push('system browser opens first; independent chat browser opens returned workspaceUrl');
+  assert.equal(created.url,created.workspaceUrl);
+  await Promise.all([a.goto(created.url),b.goto(created.workspaceUrl)]);
+  await expect(a.locator('.project-title')).toHaveText('跨浏览器打开验收');await expect(b.locator('.project-title')).toHaveText('跨浏览器打开验收');
+  await expect.poll(()=>new URL(a.url()).hash).toBe('');await expect.poll(()=>new URL(b.url()).hash).toBe('');
+  await b.reload();await expect(b.locator('.project-title')).toHaveText('跨浏览器打开验收');
+  passed.push('same link supports repeated/concurrent opens; credential removed; refresh preserves session');
+  const unchanged=(await tool(client,'get_project',{projectId:id})).revision;
+  const statuses:number[]=[];b.on('response',r=>{if(new URL(r.url()).pathname==='/api/project')statuses.push(r.status());});
+  await expect.poll(()=>statuses.filter(s=>s===304).length,{timeout:12000}).toBeGreaterThan(1);
+  await embedded.setOffline(true);await expect(b.getByRole('alert')).toContainText('正在自动重试',{timeout:6000});
+  await embedded.setOffline(false);await expect(b.getByRole('alert')).toHaveCount(0,{timeout:6000});
+  await b.route('**/api/project',route=>route.fulfill({status:502,contentType:'text/html',body:'upstream unavailable'}));
+  await expect(b.getByRole('alert')).toContainText('HTTP 502',{timeout:6000});await b.unroute('**/api/project');await expect(b.getByRole('alert')).toHaveCount(0,{timeout:6000});
+  let release!:()=>void;const held=new Promise<void>(r=>release=r);let requests=0;
+  await b.route('**/api/project',async route=>{requests++;if(requests===1)await held;try{await route.continue();}catch{}});
+  await expect(b.getByRole('alert')).toContainText('本地请求超时',{timeout:15000});
+  await expect(b.getByRole('alert')).toHaveCount(0,{timeout:6000});assert.ok(requests>=2);release();await b.unroute('**/api/project');
+  assert.equal((await tool(client,'get_project',{projectId:id})).revision,unchanged);
+  passed.push('304 polling, offline recovery, HTML 502 diagnosis and hung request timeout recover without losing project');
+  const plain=`${origin}/?project=${id}`;
+  await c.goto(plain);await expect(c.getByRole('alert')).toBeVisible();await expect(c.locator('.project-title')).toHaveCount(0);
+  assert.equal((await stranger.request.get(origin+'/api/project',{headers:{'X-CutBridge-Project':id}})).status(),401);
+  await c.goto(plain+'#ticket=invalid');await expect(c.getByRole('alert')).toBeVisible();await expect(c.locator('.project-title')).toHaveCount(0);
+  await b.goto(plain+'#ticket=invalid');await expect(b.locator('.project-title')).toHaveText('跨浏览器打开验收');await expect.poll(()=>new URL(b.url()).hash).toBe('');
+  passed.push('plain/invalid links cannot authorize a new browser; existing authorized session can recover');
+  const other=await tool(client,'create_project',{agentName:'Test',composition:{title:'另一个工程',clips:[{id:'other',name:'镜头',duration:90}]}});
+  assert.equal((await embedded.request.get(origin+'/api/project',{headers:{'X-CutBridge-Project':other.projectId}})).status(),401);
+  await c.goto(other.url);await expect(c.locator('.project-title')).toHaveText('另一个工程');
+  await a.close();await b.reload();await expect(b.locator('.project-title')).toHaveText('跨浏览器打开验收');
+  await c.reload();await expect(c.locator('.project-title')).toHaveText('另一个工程');
+  passed.push('project cookie isolation and closing one browser do not affect the other');
+  const html=await embedded.request.get(origin+'/');assert.equal(html.headers()['cache-control'],'no-store');
+  await b.route('**/api/status',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({name:'CutBridge',version:'0.0.0',apiVersion:2})}));
+  await b.reload();await expect(b.getByRole('alert')).toContainText('工作台版本不一致');await expect(b.locator('.project-title')).toHaveCount(0);
+  await b.unroute('**/api/status');await b.reload();await expect(b.locator('.project-title')).toHaveText('跨浏览器打开验收');
+  passed.push('HTML cannot retain an old build; browser rejects a mismatched backend before authorizing');
+  await client.close();
+  const until=Date.now()+60000;let healthyReads=0;
+  while(Date.now()<until){const response=await embedded.request.get(origin+'/api/project',{headers:{'X-CutBridge-Project':id}});assert.equal(response.status(),200);healthyReads++;await expect(b.getByRole('alert')).toHaveCount(0);await new Promise(r=>setTimeout(r,2000));}
+  client=await connectMcp(env);passed.push(`initiating MCP process exits; two browsers remain usable for 60 seconds (${healthyReads} authenticated reads)`);
+  await closeTestService(client,id,port);
+  const reopened=await tool(client,'open_workbench',{projectId:id}).catch(()=>tool(client,'open_workspace',{directory:path.join(root,'data',id)}));
+  await b.reload();await expect(b.getByRole('alert')).toBeVisible();await expect(b.locator('.project-title')).toHaveCount(0);
+  await b.goto(created.url);await expect(b.getByRole('alert')).toBeVisible();await expect(b.locator('.project-title')).toHaveCount(0);
+  await b.goto(reopened.url);await expect(b.locator('.project-title')).toHaveText('跨浏览器打开验收');
+  passed.push('restart invalidates old cookies/tickets; fresh Agent link restores the exact project');
+  await closeTestService(client,id,port);
+  const old=http.createServer((_req,res)=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({name:'CutBridge',version:'0.0.0',apiVersion:2}));});
+  await new Promise<void>((resolve,reject)=>{old.once('error',reject);old.listen(port,'127.0.0.1',resolve);});
+  try{await assert.rejects(connectMcp(env),/SERVICE_VERSION_MISMATCH/);}finally{await new Promise<void>(r=>old.close(()=>r()));}
+  const finalOpen=await tool(client,'open_workspace',{directory:path.join(root,'data',id)});await b.goto(finalOpen.url);await expect(b.locator('.project-title')).toHaveText('跨浏览器打开验收');
+  passed.push('MCP rejects same-API stale backend; matching installation can restart and open afterward');
+  assert.deepEqual(errors,[]);await b.screenshot({path:path.join(root,'verified-workbench.png')});
+  fs.writeFileSync(path.join(root,'result.json'),JSON.stringify({passed,errors},null,2));console.log(JSON.stringify({root,passed,errors},null,2));
+}catch(error){fs.writeFileSync(path.join(root,'failure.json'),JSON.stringify({passed,error:String(error),errors},null,2));throw error;}
+finally{await browser.close();if(id)await closeTestService(client,id,port);await client.close();}

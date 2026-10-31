@@ -22,7 +22,7 @@ export function serveFile(req:IncomingMessage,res:ServerResponse,file:string,mim
   try{
     const stat=fs.fstatSync(fd);
     if(!stat.isFile())throw new DomainError('MISSING_FILE','素材路径已不是文件，请恢复素材或重新导入。',404);
-    const headers:Record<string,string|number>={'Content-Type':mime,'Accept-Ranges':'bytes','Cache-Control':'private, max-age=3600'};
+    const headers:Record<string,string|number>={'Content-Type':mime,'Accept-Ranges':'bytes','Cache-Control':mime.startsWith('text/html')?'no-store':'private, max-age=3600'};
     if(download)headers['Content-Disposition']=`attachment; filename*=UTF-8''${encodeURIComponent(download)}`;
     const range=req.headers.range,bounds=range?byteRange(range,stat.size):undefined;
     if(range&&!bounds){res.writeHead(416,{'Content-Range':`bytes */${stat.size}`});res.end();return;}

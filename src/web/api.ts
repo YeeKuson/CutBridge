@@ -7,9 +7,10 @@ export class ApiError extends Error { constructor(message:string,public code:str
 const projectCache=new Map<string,{etag:string;project:WorkProject}>();
 export async function api<T=WorkProject>(url:string,body?:unknown):Promise<T>{
   const requestedProject=activeProject,cached=url==='/api/project'&&body===undefined?projectCache.get(requestedProject):undefined;
-  const res=await fetch(url,{method:body===undefined?'GET':'POST',headers:{...headers(),...(cached?{'If-None-Match':cached.etag}:{}),...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body)});
+  const deadline=['/api/project','/api/status'].includes(url)?10000:url==='/api/connect'?20000:undefined;
+  let res:Response;try{res=await fetch(url,{method:body===undefined?'GET':'POST',headers:{...headers(),...(cached?{'If-None-Match':cached.etag}:{}),...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body),...(deadline?{signal:AbortSignal.timeout(deadline)}:{})});}catch(error){throw new ApiError(error instanceof Error&&error.name==='TimeoutError'?'本地请求超时。':'无法连接本地服务。','CONNECTION_FAILED',0);}
   if(res.status===304&&cached)return cached.project as T;
-  const result=await res.json();if(!res.ok)throw new ApiError(result.error??'请求失败',result.code??'ERROR',res.status);
+  let result:any;try{result=await res.json();}catch{throw new ApiError(`本地请求返回异常响应（HTTP ${res.status}）。`,'INVALID_RESPONSE',res.status);}if(!res.ok)throw new ApiError(result.error??`请求失败（HTTP ${res.status}）。`,result.code??'ERROR',res.status);
   const etag=res.headers.get('etag');if(url==='/api/project'&&etag){projectCache.set(requestedProject,{etag,project:result});if(projectCache.size>4)projectCache.delete(projectCache.keys().next().value!);}
   if(url==='/api/connect')activeProject=result.id;return result;
 }
