@@ -6,6 +6,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {parseArgs} from 'node:util';
 import http from 'node:http';
 import https from 'node:https';
+import {claudeHookConfig} from './claude-hook-config.mjs';
 
 // Explicit local installer; importing or previewing never writes host settings.
 const root=path.resolve(fileURLToPath(new URL('..',import.meta.url)));
@@ -30,6 +31,7 @@ try{
     const files=['SKILL.md','agents/openai.yaml'].map(name=>({file:path.join(skill,name),text:fs.readFileSync(path.join(root,'skills/cutbridge',name),'utf8')}));
     for(const item of files){const old=read(item.file);if(old!==undefined&&hash(old)!==receipt?.files?.[path.relative(skill,item.file)]&&old!==item.text)throw Error('已有同名 Skill 或人工修改，未覆盖：'+item.file);}
     const old=read(config)??'',entry={command:process.execPath,args:[path.join(root,'scripts/mcp.mjs')],env:{CUTBRIDGE_HOST:host}};
+    let hooksHash;
     let text,managed;
     if(host==='codex'){
       managed=`${begin}\n[mcp_servers.cutbridge]\ncommand = ${JSON.stringify(entry.command)}\nargs = [${JSON.stringify(entry.args[0])}]\nstartup_timeout_sec = 60\ntool_timeout_sec = 180\nenv_vars = ["CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_APP_TOOLS_PIPE_PATH"]\n[mcp_servers.cutbridge.env]\nCUTBRIDGE_HOST = "codex"\n${end}`;
@@ -46,8 +48,21 @@ try{
       if(!doc||Array.isArray(doc)||typeof doc!=='object'||doc.mcpServers&&(typeof doc.mcpServers!=='object'||Array.isArray(doc.mcpServers)))throw Error('Claude 配置结构无效：'+config);
       if(doc.mcpServers?.cutbridge&&hash(JSON.stringify(doc.mcpServers.cutbridge))!==receipt?.configHash)throw Error('已有非安装器管理的 CutBridge MCP，未覆盖：'+config);
       doc.mcpServers??={};doc.mcpServers.cutbridge={type:'stdio',...entry};managed=JSON.stringify(doc.mcpServers.cutbridge);text=JSON.stringify(doc,null,2)+'\n';
+      const settingsFile=path.join(home,'.claude','settings.json'),settingsText=read(settingsFile),settings=settingsText?JSON.parse(settingsText):{};
+      if(!settings||Array.isArray(settings)||typeof settings!=='object'||settings.hooks&&(Array.isArray(settings.hooks)||typeof settings.hooks!=='object'))throw Error('Claude Hook 配置结构无效，未修改：'+settingsFile);
+      if(settings.disableAllHooks===true)throw Error('Claude 已禁用 Hook；未更改安全设置，无法安装自动接收。');
+      const nextHooks=claudeHookConfig(root,process.execPath);
+      const previousHooks={};settings.hooks??={};
+      const ours=item=>item?.hooks?.some(h=>Array.isArray(h.args)&&h.args.some(a=>typeof a==='string'&&/[\\/]scripts[\\/]claude-hook\.mjs$/.test(a)));
+      for(const event of Object.keys(nextHooks)){
+        if(settings.hooks[event]!==undefined&&!Array.isArray(settings.hooks[event]))throw Error('Claude Hook 列表无效，未修改：'+settingsFile);
+        previousHooks[event]=(settings.hooks[event]??[]).filter(ours);
+      }
+      if((receipt?.hooksHash||Object.values(previousHooks).some(list=>list.length))&&hash(JSON.stringify(previousHooks))!==receipt?.hooksHash)throw Error('CutBridge Hook 已被人工修改或不属于本安装器，未覆盖：'+settingsFile);
+      for(const [event,items] of Object.entries(nextHooks))settings.hooks[event]=[...(settings.hooks[event]??[]).filter(item=>!ours(item)),...items];
+      hooksHash=hash(JSON.stringify(nextHooks));files.push({file:settingsFile,text:JSON.stringify(settings,null,2)+'\n'});
     }
-    const nextReceipt=JSON.stringify({owner:'cutbridge',version:1,host,installation:root,config,configHash:hash(managed),files:Object.fromEntries(files.map(f=>[path.relative(skill,f.file),hash(f.text)]))},null,2)+'\n';
+    const nextReceipt=JSON.stringify({owner:'cutbridge',version:1,host,installation:root,config,configHash:hash(managed),...(hooksHash?{hooksHash}:{}),files:Object.fromEntries(files.filter(f=>f.file.startsWith(skill+path.sep)).map(f=>[path.relative(skill,f.file),hash(f.text)]))},null,2)+'\n';
     plans.push({host,config,skill,files:[...files,{file:config,text},{file:receiptFile,text:nextReceipt}]});
   }
   // Check every host before starting any write. Original files have adjacent backups.

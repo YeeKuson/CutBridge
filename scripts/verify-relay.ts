@@ -37,7 +37,7 @@ try{
   await assert.rejects(invoke('get_feedback',{projectId:id},a),/SESSION_REPLACED/);
   const claimed=await invoke('get_feedback',{projectId:id},b);assert.equal(claimed.feedback.length,1);assert.equal(claimed.feedback[0].text,'保留的反馈');
   passed.push('failed queue preserves feedback and shows pending; explicit B binding rejects A and can claim');
-  const notifications:any[]=[];claude=await connectMcp({...env,CUTBRIDGE_HOST:'claude'});
+  const notifications:any[]=[];claude=await connectMcp({...env,CUTBRIDGE_HOST:'claude',CUTBRIDGE_CLAUDE_CHANNEL:'1'});
   claude.setNotificationHandler(z.object({method:z.literal('notifications/claude/channel'),params:z.any()}),n=>{notifications.push(n.params);});
   await tool(claude,'open_workbench',{projectId:id});await expect.poll(()=>notifications.length,{timeout:15000}).toBe(1);assert.match(notifications[0].content,/保留的反馈/);assert.match(notifications[0].content,new RegExp(id));
   await assert.rejects(invoke('get_feedback',{projectId:id},b),/SESSION_REPLACED/);assert.equal((await tool(claude,'get_feedback',{projectId:id})).feedback.length,1);

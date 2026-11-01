@@ -6,6 +6,7 @@ import {z} from 'zod';
 import {Store,now,uid} from './store';
 import {DomainError,clipStart,formatTime} from '../core/model';
 import {sendDesktopMessage} from './codex-desktop';
+import {randomBytes} from 'node:crypto';
 
 const execute=promisify(execFile);
 export function codexExecutable(){
@@ -25,6 +26,8 @@ export class SessionBridge{
   private active=new Map<string,Promise<void>>();
   private owners=new Map<string,{caller:AgentCaller;lease:string}>();
   private bindings=new Map<string,string>();
+  private claudeHooks=new Map<string,{token:string;expires:number;lease:string;sessionId?:string}>();
+  private claudeWatchers=new Map<string,string>();
   constructor(private store:Store,private deliver:QueueMessage=queue,private service?:{port:number;adapterPath:string},private desktopDeliver=sendDesktopMessage){}
   acquire(id:string,caller:AgentCaller){
     if(caller.provider==='codex'&&!caller.threadId)throw new DomainError('SESSION_ID_REQUIRED','未取得当前 Codex 对话标识，未接管工程。请由 Agent 保留宿主会话标识重新接入。',409);
@@ -37,13 +40,57 @@ export class SessionBridge{
       delete p.agentSession;this.bindings.set(id,uid('binding'));
     }
     const label=caller.provider==='codex'?'当前 Codex 对话':caller.provider==='claude'?'当前 Claude Code 对话':'当前 Agent 对话';
-    p.agentOwner={provider:caller.provider,label,openedAt:now()};this.store.save(p);
+    if(changed)this.claudeHooks.delete(id);
+    p.agentOwner={provider:caller.provider,label,openedAt:now(),...(caller.provider==='claude'?{notification:this.claudeHooks.get(id)?.sessionId?'ready' as const:'pending' as const}:{})};this.store.save(p);
     this.owners.set(id,{caller,lease});
     if(caller.provider==='codex'&&caller.threadId)this.bind(id,caller.threadId,label);
     return {lease,owner:this.store.get(id).agentOwner};
   }
   async resumePending(id:string){
     for(const batch of this.store.get(id).batches.filter(b=>b.status==='queued'))await this.notify(id,batch.id);
+  }
+  prepareClaudeHook(id:string){
+    const owner=this.owners.get(id);if(owner?.caller.provider!=='claude')return undefined;
+    const previous=this.claudeHooks.get(id),binding={token:randomBytes(24).toString('hex'),expires:Date.now()+600000,lease:owner.lease,sessionId:previous?.lease===owner.lease?previous.sessionId:undefined};
+    this.claudeHooks.set(id,binding);return {projectId:id,token:binding.token};
+  }
+  bindClaudeHook(id:string,token:string,sessionId:string){
+    z.string().uuid().parse(sessionId);
+    const binding=this.claudeHooks.get(id),owner=this.owners.get(id);
+    if(!binding||binding.token!==token||binding.expires<Date.now()||owner?.caller.provider!=='claude'||owner.lease!==binding.lease||binding.sessionId&&binding.sessionId!==sessionId)throw new DomainError('INVALID_BINDING','Claude 通知绑定已失效，未接管其他会话。',409);
+    const first=!binding.sessionId;binding.sessionId=sessionId;
+    const p=this.store.get(id);if(p.agentOwner)p.agentOwner.notification='ready';
+    if(first)for(const b of p.batches)if(b.status==='queued')delete b.delivery;
+    this.store.save(p);return {state:'bound',projectId:id,automatic:true};
+  }
+  pollClaudeWakeup(sessionId:string,watcherId:string,start=false){
+    z.string().uuid().parse(sessionId);z.string().uuid().parse(watcherId);
+    const bound=[...this.claudeHooks].filter(([id,b])=>b.sessionId===sessionId&&this.owners.get(id)?.lease===b.lease);
+    if(!bound.length){this.claudeWatchers.delete(sessionId);return {bound:0,events:[]};}
+    if(start)this.claudeWatchers.set(sessionId,watcherId);
+    if(this.claudeWatchers.get(sessionId)!==watcherId)return {bound:0,events:[]};
+    const events=[];
+    for(const [id] of bound){
+      const p=this.store.get(id);
+      for(const b of p.batches){
+        if(b.status!=='queued'||b.delivery?.state==='queued')continue;
+        const feedback=p.feedback.filter(n=>n.batchId===b.id&&n.status==='queued').map(n=>({id:n.id,frame:n.sourceFrame,revision:n.baseRevision,scope:n.changeScope,text:n.text,suggestedText:n.suggestedText,region:n.region}));
+        if(!feedback.length)continue;
+        events.push({projectId:id,batchId:b.id,feedback});b.delivery={state:'queued',at:now()};
+      }
+      if(events.some(e=>e.projectId===id))this.store.save(p);
+    }
+    return {bound:bound.length,events};
+  }
+  endClaudeHook(sessionId:string){
+    z.string().uuid().parse(sessionId);this.claudeWatchers.delete(sessionId);
+    for(const [id,b] of this.claudeHooks)if(b.sessionId===sessionId){
+      this.claudeHooks.delete(id);const p=this.store.get(id);
+      if(p.agentOwner?.provider==='claude')p.agentOwner.notification='pending';
+      for(const batch of p.batches)if(batch.status==='queued')batch.delivery={state:'failed',at:now(),error:'Claude 对话已结束，建议已保存。请在新对话中绑定工作台。'};
+      this.store.save(p);
+    }
+    return {closed:true};
   }
   assertOwner(id:string,caller?:AgentCaller,lease?:string){
     const owner=this.owners.get(id);
@@ -52,11 +99,11 @@ export class SessionBridge{
   }
   notifications(id:string,caller:AgentCaller|undefined,lease:string|undefined){
     this.assertOwner(id,caller,lease);
-    const p=this.store.get(id);return p.batches.filter(b=>b.status==='queued'&&b.delivery?.state!=='notified').map(b=>({batchId:b.id,count:p.feedback.filter(n=>n.batchId===b.id&&n.status==='queued').length,feedback:p.feedback.filter(n=>n.batchId===b.id&&n.status==='queued').map(n=>({id:n.id,frame:n.sourceFrame,revision:n.baseRevision,scope:n.changeScope,text:n.text,suggestedText:n.suggestedText,region:n.region}))}));
+    const p=this.store.get(id);if(this.claudeHooks.get(id)?.sessionId)return [];return p.batches.filter(b=>b.status==='queued'&&!['notified','queued'].includes(b.delivery?.state??'')).map(b=>({batchId:b.id,count:p.feedback.filter(n=>n.batchId===b.id&&n.status==='queued').length,feedback:p.feedback.filter(n=>n.batchId===b.id&&n.status==='queued').map(n=>({id:n.id,frame:n.sourceFrame,revision:n.baseRevision,scope:n.changeScope,text:n.text,suggestedText:n.suggestedText,region:n.region}))}));
   }
   acknowledge(id:string,batchId:string,caller:AgentCaller|undefined,lease:string|undefined){
     this.assertOwner(id,caller,lease);if(caller?.provider!=='claude')throw new DomainError('INVALID_SESSION','仅当前 Claude 通道可以确认通知。',403);
-    const p=this.store.get(id),b=p.batches.find(b=>b.id===batchId);if(b?.status==='queued'){b.delivery={state:'notified',at:now()};this.store.save(p);}return {acknowledged:true};
+    const p=this.store.get(id),b=p.batches.find(b=>b.id===batchId);if(b?.status==='queued'){b.delivery={state:'queued',at:now()};this.store.save(p);}return {acknowledged:true};
   }
   retry(id:string,batchId:string){
     const p=this.store.get(id),b=p.batches.find(b=>b.id===batchId);if(!b)throw new DomainError('NOT_FOUND','反馈批次不存在。',404);
@@ -73,7 +120,9 @@ export class SessionBridge{
     if(!batch)throw new DomainError('NOT_FOUND','反馈批次不存在。',404);
     if(batch.status!=='queued'||batch.delivery&&['queued','notified'].includes(batch.delivery.state))return;
     if(!p.agentSession){
-      if(p.agentOwner?.provider==='claude')return;
+      if(p.agentOwner?.provider==='claude'){
+        if(!this.claudeHooks.get(id)?.sessionId){batch.delivery={state:'failed',at:now(),error:'建议已保存，Claude 自动接收尚未就绪。请更新 CutBridge 接入并重新启动 Claude，再要求绑定当前工作台。'};this.store.save(p);}return;
+      }
       batch.delivery={state:'failed',at:now(),error:'建议已保存，但未绑定可接收通知的对话。由 Agent 重新打开或接管此工程后会自动续送。'};this.store.save(p);return;
     }
     const binding=this.bindings.get(id),key=`${id}:${batchId}:${binding}`;if(this.active.has(key))return this.active.get(key);

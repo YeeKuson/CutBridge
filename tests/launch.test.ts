@@ -37,6 +37,10 @@ test('installer previews, preserves unrelated config, repeats safely and rejects
   const applied=run('--apply');assert.equal(applied.status,'installed');assert.equal(applied.backups.length,2);
   assert.match(fs.readFileSync(path.join(codex,'config.toml'),'utf8'),/command = "existing"/);const doc=JSON.parse(fs.readFileSync(claudeFile,'utf8'));assert.equal(doc.projects.sample.trusted,true);assert.equal(doc.mcpServers.existing.command,'keep');assert.equal(doc.mcpServers.cutbridge.type,'stdio');
   assert.equal(run('--apply').changedFiles.length,0);
+  const settingsFile=path.join(home,'.claude/settings.json'),settings=JSON.parse(fs.readFileSync(settingsFile,'utf8'));
+  assert.equal(settings.hooks.Stop[0].hooks[0].asyncRewake,true);assert.ok(Array.isArray(settings.hooks.Stop[0].hooks[0].args));assert.equal(settings.permissions,undefined);
+  settings.theme='keep';settings.hooks.Stop.unshift({hooks:[{type:'command',command:'unrelated-hook'}]});fs.writeFileSync(settingsFile,JSON.stringify(settings));run('--apply');
+  const preserved=JSON.parse(fs.readFileSync(settingsFile,'utf8'));assert.equal(preserved.theme,'keep');assert.equal(preserved.hooks.Stop[0].hooks[0].command,'unrelated-hook');assert.equal(preserved.hooks.Stop.length,2);
   const skill=path.join(home,'.agents/skills/cutbridge/SKILL.md');fs.appendFileSync(skill,'\nUser edit\n');const before=fs.readFileSync(claudeFile,'utf8');assert.throws(()=>run('--apply'),/人工修改/);assert.equal(fs.readFileSync(claudeFile,'utf8'),before);
 });
 test('installer rejects a preexisting unmanaged MCP before creating any skill',()=>{
@@ -44,10 +48,18 @@ test('installer rejects a preexisting unmanaged MCP before creating any skill',(
   assert.throws(()=>execFileSync(process.execPath,['scripts/install.mjs','--host','codex','--home',home,'--apply',...(process.platform==='win32'?[]:['--experimental-platform'])],{encoding:'utf8',windowsHide:true}),/已有 CutBridge/);
   assert.equal(fs.existsSync(path.join(home,'.agents')),false);assert.match(fs.readFileSync(config,'utf8'),/my-server/);
 });
+test('installer refuses modified CutBridge hooks and preserves all existing Claude settings',()=>{
+  const {root}=setup(),home=folder(root,'home'),settingsFile=path.join(folder(home,'.claude'),'settings.json');
+  fs.writeFileSync(settingsFile,JSON.stringify({permissions:{defaultMode:'default'},hooks:{Stop:[{hooks:[{type:'command',command:'existing-hook'}]}]}}));
+  const run=()=>execFileSync(process.execPath,['scripts/install.mjs','--host','claude','--home',home,'--apply',...(process.platform==='win32'?[]:['--experimental-platform'])],{encoding:'utf8',windowsHide:true});run();
+  const settings=JSON.parse(fs.readFileSync(settingsFile,'utf8'));assert.equal(settings.permissions.defaultMode,'default');assert.equal(settings.hooks.Stop[0].hooks[0].command,'existing-hook');settings.hooks.Stop[1].hooks[0].timeout=10;fs.writeFileSync(settingsFile,JSON.stringify(settings));
+  const before=fs.readFileSync(settingsFile,'utf8'),config=fs.readFileSync(path.join(home,'.claude.json'),'utf8');assert.throws(run,/Hook 已被人工修改/);assert.equal(fs.readFileSync(settingsFile,'utf8'),before);assert.equal(fs.readFileSync(path.join(home,'.claude.json'),'utf8'),config);
+});
 
 test('Windows installer rejects application-private cache before writing host configuration',{skip:process.platform!=='win32'},()=>{
   const {root}=setup(),installation=folder(root,'AppData/Local/Packages/Example.Host/LocalCache/Local/CutBridge'),home=folder(root,'home');
   const script=path.join(folder(installation,'scripts'),'install.mjs');fs.copyFileSync('scripts/install.mjs',script);
+  fs.copyFileSync('scripts/claude-hook-config.mjs',path.join(installation,'scripts/claude-hook-config.mjs'));
   const config=path.join(folder(home,'.codex'),'config.toml');fs.writeFileSync(config,'model = "keep"\n');
   assert.throws(()=>execFileSync(process.execPath,[script,'--host','codex','--home',home,'--apply'],{encoding:'utf8',windowsHide:true}),/INSTALL_VIRTUALIZED/);
   assert.equal(fs.readFileSync(config,'utf8'),'model = "keep"\n');assert.equal(fs.existsSync(path.join(home,'.agents')),false);
@@ -57,7 +69,7 @@ test('renderer download failure leaves both host settings and skills untouched',
   const {root}=setup(),installation=folder(root,'installation'),home=folder(root,'home');
   // Resolve dependencies from the parent checkout, but use an empty renderer cache.
   fs.writeFileSync(path.join(installation,'package.json'),'{"type":"module"}');
-  for(const relative of ['scripts/install.mjs','skills/cutbridge/SKILL.md','skills/cutbridge/agents/openai.yaml','dist/web/index.html']){
+  for(const relative of ['scripts/install.mjs','scripts/claude-hook-config.mjs','skills/cutbridge/SKILL.md','skills/cutbridge/agents/openai.yaml','dist/web/index.html']){
     const target=path.join(installation,relative);fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(relative,target);
   }
   const config=path.join(folder(home,'.codex'),'config.toml'),claude=path.join(home,'.claude.json');

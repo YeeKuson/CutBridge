@@ -80,7 +80,7 @@ export type FeedbackInput = z.infer<typeof feedbackInput>;
 export interface Feedback extends FeedbackInput { id: string; requestId?:string; baseRevision: number; sourceFrame: number; createdAt: string; status: 'draft' | 'queued' | 'claimed' | 'review' | 'resolved'; batchId?: string; proposalId?: string; reply?: string }
 export interface Batch { id: string; feedbackIds: string[]; status: 'queued' | 'claimed' | 'review' | 'done'; createdAt: string; delivery?:{state:'sending'|'queued'|'notified'|'failed';at:string;messageId?:string;needsResume?:boolean;error?:string} }
 export interface AgentSession {provider:'codex';threadId:string;label:string;boundAt:string}
-export interface AgentOwner {provider:'codex'|'claude'|'mcp';label:string;openedAt:string}
+export interface AgentOwner {provider:'codex'|'claude'|'mcp';label:string;openedAt:string;notification?:'pending'|'ready'}
 export interface RequestRecord {kind:string;signature:string;ids:string[]}
 export interface Proposal { id: string; requestId: string; baseRevision: number; operations: Operation[]; rationale: string; feedbackIds: string[]; status: 'pending' | 'accepted' | 'rejected'; createdAt: string; appliedRevision?: number }
 export interface RenderJob { id: string; revision: number; state: 'queued' | 'rendering' | 'done' | 'failed' | 'cancelled'; progress: number; createdAt: string; error?: string; file?: string }

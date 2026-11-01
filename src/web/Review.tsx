@@ -54,6 +54,7 @@ export function FeedbackPanel({project:p,clip,offset,region,endOffset,onAction:r
   const waitingBatch=p.batches.findLast(b=>b.status==='queued'&&b.feedbackIds.some(id=>active.some(n=>n.id===id))),delivery=waitingBatch?.delivery;
   const undelivered=p.batches.some(b=>b.status==='queued'&&(!b.delivery||b.delivery.state==='failed'||b.delivery.state==='sending'||b.delivery.needsResume));
   return <div className={`feedback-panel ${voice?'voice-review':''}`}>
+    {p.agentOwner?.provider==='claude'&&<p className="helper" role="status">{p.agentOwner.notification==='ready'?'当前 Claude 对话 · 自动接收':'当前 Claude 对话 · 等待接入自动接收'}</p>}
     {voice&&<VoicePanel project={p} selectedId={target.captionId} onSelect={selectCaption} busy={locked||sending}/>}
     <fieldset className="feedback-compose" disabled={sending||locked}>
       <div className="anchor-label"><Crosshair size={18}/><span>{target.clip.name}</span><code>{formatTime(target.frame)}</code><span>第 {target.frame} 帧</span></div>

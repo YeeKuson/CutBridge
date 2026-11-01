@@ -71,6 +71,9 @@ async function agentAction(tool:string,args:Record<string,unknown>,caller?:Agent
   const remember=(id:string)=>{if(args.context){const ctx=z.object({directory:z.string().max(2000),host:z.string().max(80)}).strict().parse(args.context);const p=store.get(id);p.openedFrom={...ctx,at:now()};store.save(p);}return ticket(id);};
   if(tool==='get_recipes')return recipes;
   if(tool==='get_capabilities')return {...capabilities,version:APP_VERSION};
+  if(tool==='bind_claude_hook'){const a=z.object({projectId:idSchema,token:z.string().regex(/^[a-f0-9]{48}$/),sessionId:z.string().uuid()}).strict().parse(args);return bridge.bindClaudeHook(a.projectId,a.token,a.sessionId);}
+  if(tool==='poll_claude_wakeup'){const a=z.object({sessionId:z.string().uuid(),watcherId:z.string().uuid(),start:z.boolean().default(false)}).strict().parse(args);return bridge.pollClaudeWakeup(a.sessionId,a.watcherId,a.start);}
+  if(tool==='end_claude_hook')return bridge.endClaudeHook(z.object({sessionId:z.string().uuid()}).strict().parse(args).sessionId);
   if(tool==='list_projects')return [...store.list(),...store.unavailable];
   if(['open_workspace','open_project','open_workbench','create_project','bind_session'].includes(tool)){
     if(!caller)throw new DomainError('SESSION_REQUIRED','请重新连接新版 CutBridge MCP。',409);
@@ -81,7 +84,7 @@ async function agentAction(tool:string,args:Record<string,unknown>,caller?:Agent
     const result=remember(id);
     const ownership=bridge.acquire(id,caller);
     void bridge.resumePending(id).catch(console.error);
-    return {...result,...ownership,session:caller.provider==='codex'&&caller.threadId?{state:'bound',host:'Codex',message:'已自动绑定当前对话，待领取建议会自动续送。'}:{state:caller.provider==='claude'?'channel':'manual',host:caller.provider==='claude'?'Claude Code':'Agent',message:caller.provider==='claude'?'已绑定当前 MCP 连接。自动接续需要宿主批准 CutBridge channel；未启用时不得宣称通知已送达。':'当前宿主没有自动通知能力。'}};
+    return {...result,...ownership,...(caller.provider==='claude'?{claudeHook:bridge.prepareClaudeHook(id)}:{}),session:caller.provider==='codex'&&caller.threadId?{state:'bound',host:'Codex',message:'已自动绑定当前对话，待领取建议会自动续送。'}:{state:caller.provider==='claude'?(ownership.owner?.notification==='ready'?'bound':'binding'):'manual',host:caller.provider==='claude'?'Claude Code':'Agent',message:caller.provider==='claude'?'工程已接管，安装的 PostToolUse Hook 将自动连接当前 Claude 对话。以 Hook 成功回执或 get_project 的 agentOwner.notification=ready 确认自动接收，不要求用户再输入处理反馈。':'当前宿主没有自动通知能力。'}};
   };
   if(tool==='open_workspace'){
     const directory=absoluteDirectory(z.string().min(1).parse(args.directory)),projects=discoverProjects(directory);
