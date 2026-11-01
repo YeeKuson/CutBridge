@@ -1,3 +1,4 @@
+import {renderSignature} from '../core/render-change';
 import fs from 'node:fs';
 import {validateFeedbackScope} from '../core/feedback-intent';
 import path from 'node:path';
@@ -142,8 +143,9 @@ export class Store {
   private appendFeedback(p:Project,base:number,input:FeedbackInput,requestId?:string){
     const data=feedbackInput.parse(input),signature=JSON.stringify({base,data}),record=requestId?this.checkRequest(p,requestId,'feedback',signature):undefined;
     const existing=requestId?p.feedback.find(n=>n.requestId===requestId):undefined;
-    if(existing){if(existing.baseRevision!==base||(['clipId','captionId','offset','endOffset','region','text','category','changeScope','suggestedText'] as const).some(key=>JSON.stringify(existing[key])!==JSON.stringify(data[key])))throw new DomainError('REQUEST_CONFLICT','此提交标识已保存不同内容，请重新标记后发送。',409);return p;}
+    if(existing){if(existing.baseRevision!==base||(['clipId','captionId','offset','endOffset','timeScope','region','text','category','changeScope','suggestedText'] as const).some(key=>JSON.stringify(existing[key])!==JSON.stringify(data[key])))throw new DomainError('REQUEST_CONFLICT','此提交标识已保存不同内容，请重新标记后发送。',409);return p;}
     if(record)throw new DomainError('REQUEST_REMOVED','这条反馈已删除，旧请求不会重新创建它。请重新标记。',409);
+    if(data.timeScope&&data.endOffset!==undefined)throw new DomainError('INVALID_FEEDBACK','请分别指定证据帧和片段范围，不要混用旧范围字段。');
     this.revision(p,base);const clip=p.composition.clips.find(c=>c.id===data.clipId);
     if(!clip||data.offset>=clip.duration||data.endOffset!==undefined&&(data.endOffset<data.offset||data.endOffset>=clip.duration)) throw new DomainError('OUT_OF_RANGE','反馈范围不在当前镜头内。');
     if(data.captionId&&!p.composition.captions.some(c=>c.id===data.captionId&&c.clipId===data.clipId)) throw new DomainError('NOT_FOUND','反馈字幕不存在。');
@@ -191,6 +193,7 @@ export class Store {
     for(const fid of input.feedbackIds){const n=p.feedback.find(n=>n.id===fid);if(!n||!['claimed','queued'].includes(n.status))throw new DomainError('INVALID_FEEDBACK','提案只能关联待处理的反馈。');if(feedbackLocation(p.composition,n).stale)throw new DomainError('STALE_FEEDBACK','反馈已失效，需要用户重新定位。',409);}
     const preview=applyOperations(p.composition,input.operations,'agent');this.assetsValid(p,preview);
     validateFeedbackScope(p.composition,preview,p.feedback.filter(n=>input.feedbackIds.includes(n.id)));
+    if(input.feedbackIds.length&&renderSignature(p.composition)===renderSignature(preview))throw new DomainError('NO_VISIBLE_CHANGE','提案没有改变成片画面或声音。素材内部内容需重制或替换，不能仅修改名称或无效样式。',409);
     const proposal:Proposal={...input,id:uid('proposal'),status:'pending',createdAt:now()};p.proposals.push(proposal);p.agent.lastSeen=now();
     if(voiceJobId){const job=p.voiceJobs?.find(j=>j.id===voiceJobId);if(!job||!['queued','claimed'].includes(job.status))throw new DomainError('STALE_VOICE','配音任务已失效，请重新读取任务。',409);job.status='review';job.proposalId=proposal.id;}
     for(const note of p.feedback.filter(n=>input.feedbackIds.includes(n.id))){note.status='review';note.proposalId=proposal.id;note.reply=input.rationale;}
@@ -230,8 +233,8 @@ export class Store {
     for(const note of p.feedback.filter(n=>selected.has(n.id))){
       if(note.proposalId)this.rejectProposal(p,note.proposalId);
       if(note.requestId&&!p.requestRecords?.[note.requestId]){
-        const {clipId,captionId,offset,endOffset,region,text,category,changeScope,suggestedText}=note;
-        const data=feedbackInput.parse({clipId,captionId,offset,endOffset,region,text,category,changeScope,suggestedText});this.recordRequest(p,note.requestId,'feedback',JSON.stringify({base:note.baseRevision,data}),[note.id]);
+        const {clipId,captionId,offset,endOffset,timeScope,region,text,category,changeScope,suggestedText}=note;
+        const data=feedbackInput.parse({clipId,captionId,offset,endOffset,timeScope,region,text,category,changeScope,suggestedText});this.recordRequest(p,note.requestId,'feedback',JSON.stringify({base:note.baseRevision,data}),[note.id]);
       }
     }
     p.feedback=p.feedback.filter(n=>!selected.has(n.id));return this.save(p);

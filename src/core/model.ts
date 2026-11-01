@@ -71,6 +71,7 @@ export interface Asset { id: string; name: string; kind: 'video' | 'image' | 'au
 export interface Revision { number: number; createdAt: string; actor: 'agent' | 'human'; label: string; composition: Composition;operations?:Operation[] }
 export const feedbackInput = z.object({
   clipId: idSchema, captionId: idSchema.optional(), offset: frame, endOffset: frame.optional(),
+  timeScope: z.enum(['frame','clip']).optional(),
   region: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1), width: z.number().min(0).max(1), height: z.number().min(0).max(1) }).strict().optional(),
   text: z.string().trim().min(1).max(3000), category: z.enum(['pacing', 'text', 'visual', 'audio', 'other']).default('other'),
   changeScope: z.enum(['visual','dialogue','both']).optional(),

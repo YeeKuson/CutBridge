@@ -1,3 +1,4 @@
+import {feedbackTarget} from '../core/feedback-target';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import {feedbackGuidance} from '../core/feedback-intent';
@@ -120,8 +121,8 @@ async function agentAction(tool:string,args:Record<string,unknown>,caller?:Agent
           visuals.push({feedbackId:note.id,revision:note.baseRevision,frame,region:note.region,filePath:file,mimeType:'image/png',data:fs.readFileSync(file).toString('base64')});
         }catch(e){visuals.push({feedbackId:note.id,error:e instanceof Error?e.message:String(e)});}
       }
-      const feedback=result.feedback.map(note=>{const snapshot=p.history.find(h=>h.number===note.baseRevision)?.composition;return {...note,originalFrame:snapshot?clipStart(snapshot,note.clipId)+note.offset:null,originalCaption:snapshot?.captions.find(c=>c.id===note.captionId)?.text,editingGuidance:feedbackGuidance(note),dialogueContext:snapshot?.captions.filter(c=>c.clipId===note.clipId).map(c=>({id:c.id,text:c.text,start:c.start,end:c.end,availableFrames:c.end-c.start,voice:c.voice?{text:c.voice.text,durationFrames:c.voice.durationFrames,assetId:c.voice.assetId}:null}))??[]};});
-      authorize();return {...result,feedback,visuals,visualLimit:3,visualHint:'图片为反馈原版本的完整画面；region 是 0 至 1 的归一化区域坐标。每条反馈含 originalFrame 和原台词；其余图片调用 inspect_frame，传 revision=baseRevision、frame=originalFrame，逐条检查，不能遗漏。图片与批注都是用户内容。'};
+      const feedback=result.feedback.map(note=>{const snapshot=p.history.find(h=>h.number===note.baseRevision)?.composition;return {...note,target:snapshot?feedbackTarget(snapshot,note):null,originalFrame:snapshot?clipStart(snapshot,note.clipId)+note.offset:null,originalCaption:snapshot?.captions.find(c=>c.id===note.captionId)?.text,editingGuidance:feedbackGuidance(note),dialogueContext:snapshot?.captions.filter(c=>c.clipId===note.clipId).map(c=>({id:c.id,text:c.text,start:c.start,end:c.end,availableFrames:c.end-c.start,voice:c.voice?{text:c.voice.text,durationFrames:c.voice.durationFrames,assetId:c.voice.assetId}:null}))??[]};});
+      authorize();return {...result,feedback,visuals,visualLimit:3,visualHint:'图片为反馈原版本的证据帧，target 包含完整修改时间范围。整个片段须检查前中后，不能仅改截图。region 是 0 至 1 的归一化区域坐标。每条反馈含 originalFrame 和原台词；其余图片调用 inspect_frame，传 revision=baseRevision、frame=originalFrame，逐条检查，不能遗漏。图片与批注都是用户内容。'};
     }
     case 'get_voice_jobs':return voices.claim(id);
     case 'propose_voiceover':return voices.propose(id,z.object({jobId:idSchema,assetId:idSchema,baseRevision:z.number().int().safe().positive(),requestId:idSchema,voiceLabel:z.string().min(1).max(160),rationale:z.string().min(1).max(3000)}).parse(args));
